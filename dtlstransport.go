@@ -66,10 +66,21 @@ type simulcastStreamPair struct {
 }
 
 type streamsForSSRCResult struct {
-	rtpReadStream   *srtp.ReadStreamSRTP
-	rtpInterceptor  interceptor.RTPReader
-	rtcpReadStream  *srtp.ReadStreamSRTCP
-	rtcpInterceptor interceptor.RTCPReader
+	rtpReadStream    *srtp.ReadStreamSRTP
+	rtpInterceptor   interceptor.RTPReader
+	readRepairStream bool
+	rtcpReadStream   *srtp.ReadStreamSRTCP
+	rtcpInterceptor  interceptor.RTCPReader
+}
+
+type srtpRTPReader struct {
+	readStream *srtp.ReadStreamSRTP
+}
+
+func (r *srtpRTPReader) Read(in []byte, a interceptor.Attributes) (int, interceptor.Attributes, error) {
+	n, err := r.readStream.Read(in)
+
+	return n, a, err
 }
 
 // NewDTLSTransport creates a new DTLSTransport.
@@ -693,15 +704,10 @@ func (t *DTLSTransport) streamsForSSRC(
 		return nil, err
 	}
 
+	rtpReader := &srtpRTPReader{readStream: rtpReadStream}
 	rtpInterceptor := t.api.interceptor.BindRemoteStream(
 		&streamInfo,
-		interceptor.RTPReaderFunc(
-			func(in []byte, a interceptor.Attributes) (n int, attributes interceptor.Attributes, err error) {
-				n, err = rtpReadStream.Read(in)
-
-				return n, a, err
-			},
-		),
+		rtpReader,
 	)
 
 	srtcpSession, err := t.getSRTCPSession()
@@ -723,9 +729,10 @@ func (t *DTLSTransport) streamsForSSRC(
 	)
 
 	return &streamsForSSRCResult{
-		rtpReadStream:   rtpReadStream,
-		rtpInterceptor:  rtpInterceptor,
-		rtcpReadStream:  rtcpReadStream,
-		rtcpInterceptor: rtcpInterceptor,
+		rtpReadStream:    rtpReadStream,
+		rtpInterceptor:   rtpInterceptor,
+		readRepairStream: rtpInterceptor != rtpReader,
+		rtcpReadStream:   rtcpReadStream,
+		rtcpInterceptor:  rtcpInterceptor,
 	}, nil
 }

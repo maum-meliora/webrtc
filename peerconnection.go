@@ -1892,6 +1892,7 @@ func (pc *PeerConnection) handleIncomingSSRC(rtpStream *srtp.ReadStreamSRTP, ssr
 	}
 	readStream := result.rtpReadStream
 	interceptor := result.rtpInterceptor
+	readRepairStream := result.readRepairStream
 	rtcpReadStream := result.rtcpReadStream
 	rtcpInterceptor := result.rtcpInterceptor
 
@@ -1945,7 +1946,16 @@ func (pc *PeerConnection) handleIncomingSSRC(rtpStream *srtp.ReadStreamSRTP, ssr
 			}
 
 			if rsid != "" {
-				return receiver.receiveForRtx(SSRC(0), rsid, streamInfo, readStream, interceptor, rtcpReadStream, rtcpInterceptor)
+				return receiver.receiveForRtx(
+					SSRC(0),
+					rsid,
+					streamInfo,
+					readStream,
+					interceptor,
+					readRepairStream,
+					rtcpReadStream,
+					rtcpInterceptor,
+				)
 			}
 
 			track, err := receiver.receiveForRid(

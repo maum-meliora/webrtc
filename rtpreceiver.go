@@ -258,6 +258,7 @@ func (r *RTPReceiver) startReceive(parameters RTPReceiveParameters) error { //no
 			}
 			rtpReadStream := result.rtpReadStream
 			rtpInterceptor := result.rtpInterceptor
+			readRepairStream := result.readRepairStream
 			rtcpReadStream := result.rtcpReadStream
 			rtcpInterceptor := result.rtcpInterceptor
 
@@ -267,6 +268,7 @@ func (r *RTPReceiver) startReceive(parameters RTPReceiveParameters) error { //no
 				streamInfo,
 				rtpReadStream,
 				rtpInterceptor,
+				readRepairStream,
 				rtcpReadStream,
 				rtcpInterceptor,
 			); err != nil {
@@ -584,13 +586,14 @@ func (r *RTPReceiver) receiveForRid(
 	return nil, fmt.Errorf("%w: %s", errRTPReceiverForRIDTrackStreamNotFound, rid)
 }
 
-// receiveForRtx starts a routine that processes the repair stream.
+// receiveForRtx configures the repair stream and starts a reader when needed.
 func (r *RTPReceiver) receiveForRtx(
 	ssrc SSRC,
 	rsid string,
 	streamInfo *interceptor.StreamInfo,
 	rtpReadStream *srtp.ReadStreamSRTP,
 	rtpInterceptor interceptor.RTPReader,
+	readRepairStream bool,
 	rtcpReadStream *srtp.ReadStreamSRTCP,
 	rtcpInterceptor interceptor.RTCPReader,
 ) error {
@@ -603,6 +606,7 @@ func (r *RTPReceiver) receiveForRtx(
 		streamInfo,
 		rtpReadStream,
 		rtpInterceptor,
+		readRepairStream,
 		rtcpReadStream,
 		rtcpInterceptor,
 	)
@@ -615,6 +619,7 @@ func (r *RTPReceiver) receiveForRtxInternal(
 	streamInfo *interceptor.StreamInfo,
 	rtpReadStream *srtp.ReadStreamSRTP,
 	rtpInterceptor interceptor.RTPReader,
+	readRepairStream bool,
 	rtcpReadStream *srtp.ReadStreamSRTCP,
 	rtcpInterceptor interceptor.RTCPReader,
 ) error {
@@ -647,6 +652,12 @@ func (r *RTPReceiver) receiveForRtxInternal(
 	track.repairInterceptor = rtpInterceptor
 	track.repairRtcpReadStream = rtcpReadStream
 	track.repairRtcpInterceptor = rtcpInterceptor
+	track.repairStreamChannel = nil
+
+	if !readRepairStream {
+		return nil
+	}
+
 	track.repairStreamChannel = make(chan rtxPacketWithAttributes, 50)
 
 	repairInterceptor := track.repairInterceptor
@@ -765,6 +776,10 @@ func (r *RTPReceiver) readRTX(reader *TrackRemote) *rtxPacketWithAttributes {
 		ch = t.repairStreamChannel
 	}
 	r.mu.RUnlock()
+
+	if ch == nil {
+		return nil
+	}
 
 	select {
 	case rtxPacketReceived := <-ch:

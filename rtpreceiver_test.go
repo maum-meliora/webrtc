@@ -128,7 +128,7 @@ func TestRTPReceiver_ClosedReceiveForRIDAndRTX(t *testing.T) {
 		assert.Nil(t, track)
 		assert.ErrorIs(t, err, io.EOF)
 
-		err = receiver.receiveForRtx(SSRC(0), "rid", rtxStreamInfo, nil, rtpInterceptor, nil, nil)
+		err = receiver.receiveForRtx(SSRC(0), "rid", rtxStreamInfo, nil, rtpInterceptor, true, nil, nil)
 		assert.ErrorIs(t, err, io.EOF)
 	}
 
@@ -136,6 +136,120 @@ func TestRTPReceiver_ClosedReceiveForRIDAndRTX(t *testing.T) {
 	case <-readCalled:
 		assert.Fail(t, "repair reader invoked after Stop")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRTPReceiver_ReceiveForRtxSkipsRepairReaderWhenDisabled(t *testing.T) {
+	receiver := &RTPReceiver{
+		kind:       RTPCodecTypeVideo,
+		received:   make(chan any),
+		closedChan: make(chan any),
+		rtxPool: sync.Pool{New: func() any {
+			return make([]byte, 1200)
+		}},
+	}
+
+	receiver.configureReceive(RTPReceiveParameters{
+		Encodings: []RTPDecodingParameters{
+			{
+				RTPCodingParameters: RTPCodingParameters{
+					SSRC: 1111,
+					RTX: RTPRtxParameters{
+						SSRC: 2222,
+					},
+				},
+			},
+		},
+	})
+
+	readCalled := make(chan struct{}, 1)
+	rtpInterceptor := interceptor.RTPReaderFunc(
+		func(_ []byte, a interceptor.Attributes) (int, interceptor.Attributes, error) {
+			readCalled <- struct{}{}
+
+			return 0, a, io.EOF
+		},
+	)
+
+	require.NoError(t, receiver.receiveForRtx(
+		SSRC(2222),
+		"",
+		&interceptor.StreamInfo{SSRC: 2222},
+		nil,
+		rtpInterceptor,
+		false,
+		nil,
+		nil,
+	))
+
+	receiver.mu.RLock()
+	repairStreamChannel := receiver.tracks[0].repairStreamChannel
+	repairInterceptor := receiver.tracks[0].repairInterceptor
+	receiver.mu.RUnlock()
+
+	assert.Nil(t, repairStreamChannel)
+	assert.NotNil(t, repairInterceptor)
+
+	select {
+	case <-readCalled:
+		assert.Fail(t, "repair reader invoked for pass-through interceptor")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRTPReceiver_ReceiveForRtxStartsRepairReaderWhenEnabled(t *testing.T) {
+	receiver := &RTPReceiver{
+		kind:       RTPCodecTypeVideo,
+		received:   make(chan any),
+		closedChan: make(chan any),
+		rtxPool: sync.Pool{New: func() any {
+			return make([]byte, 1200)
+		}},
+	}
+
+	receiver.configureReceive(RTPReceiveParameters{
+		Encodings: []RTPDecodingParameters{
+			{
+				RTPCodingParameters: RTPCodingParameters{
+					SSRC: 1111,
+					RTX: RTPRtxParameters{
+						SSRC: 2222,
+					},
+				},
+			},
+		},
+	})
+
+	readCalled := make(chan struct{}, 1)
+	rtpInterceptor := interceptor.RTPReaderFunc(
+		func(_ []byte, a interceptor.Attributes) (int, interceptor.Attributes, error) {
+			readCalled <- struct{}{}
+
+			return 0, a, io.EOF
+		},
+	)
+
+	require.NoError(t, receiver.receiveForRtx(
+		SSRC(2222),
+		"",
+		&interceptor.StreamInfo{SSRC: 2222},
+		nil,
+		rtpInterceptor,
+		true,
+		nil,
+		nil,
+	))
+
+	receiver.mu.RLock()
+	repairStreamChannel := receiver.tracks[0].repairStreamChannel
+	receiver.mu.RUnlock()
+
+	assert.NotNil(t, repairStreamChannel)
+
+	select {
+	case <-readCalled:
+	case <-time.After(time.Second):
+		assert.Fail(t, "repair reader was not invoked")
 	}
 }
 
@@ -199,7 +313,7 @@ func TestRTPReceiver_readRTX_ChannelAccessSafe(t *testing.T) {
 	)
 
 	for range 50 {
-		require.NoError(t, receiver.receiveForRtx(SSRC(2222), "", repairStreamInfo, nil, rtpInterceptor, nil, nil))
+		require.NoError(t, receiver.receiveForRtx(SSRC(2222), "", repairStreamInfo, nil, rtpInterceptor, true, nil, nil))
 	}
 
 	close(stop)
@@ -286,7 +400,7 @@ func TestRTPReceiver_ReadRTP_SimulcastNoRace(t *testing.T) {
 		},
 	)
 	require.NoError(t, receiver.receiveForRtx(
-		SSRC(0), "low", repairStreamInfo, nil, repairInterceptor, nil, nil,
+		SSRC(0), "low", repairStreamInfo, nil, repairInterceptor, true, nil, nil,
 	))
 
 	highInterceptor := interceptor.RTPReaderFunc(
